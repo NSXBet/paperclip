@@ -1,0 +1,103 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/paperclipai/paperclip.git
+          git fetch upstream master
+          git fetch origin master
+
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count origin/master..upstream/master)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "Fork is already up to date with upstream."
+          else
+            echo "Fork is $BEHIND commit(s) behind upstream."
+          fi
+
+      - name: Try fast-forward merge
+        if: steps.check.outputs.behind != '0'
+        id: fast-forward
+        run: |
+          git checkout master
+
+          # Find the fork-only commits (commits in origin/master not in upstream/master)
+          FORK_COMMITS=$(git rev-list --count upstream/master..origin/master)
+          echo "fork_commits=$FORK_COMMITS" >> "$GITHUB_OUTPUT"
+
+          if [ "$FORK_COMMITS" -eq 0 ]; then
+            # No fork-only commits, just fast-forward
+            git merge --ff-only upstream/master && echo "status=clean" >> "$GITHUB_OUTPUT" || echo "status=conflict" >> "$GITHUB_OUTPUT"
+          else
+            # Fork has its own commits - try rebase to keep them on top
+            git rebase upstream/master && echo "status=clean" >> "$GITHUB_OUTPUT" || {
+              git rebase --abort
+              echo "status=conflict" >> "$GITHUB_OUTPUT"
+            }
+          fi
+
+      - name: Push if clean
+        if: steps.check.outputs.behind != '0' && steps.fast-forward.outputs.status == 'clean'
+        run: git push origin master --force-with-lease
+
+      - name: Use Claude Code for conflict resolution
+        if: steps.check.outputs.behind != '0' && steps.fast-forward.outputs.status == 'conflict'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            You are syncing a fork (origin/master) with its upstream (upstream/master).
+
+            The automated rebase failed due to conflicts. Your job:
+
+            1. Run `git fetch upstream master && git fetch origin master` to make sure refs are fresh.
+            2. Identify the fork-only commits: `git log --oneline upstream/master..origin/master`
+            3. Start the rebase: `git rebase upstream/master`
+            4. For each conflict:
+               - Examine the conflict markers carefully
+               - Resolve in favor of keeping BOTH upstream changes AND the fork's custom changes
+               - If a fork commit modifies a file that upstream also changed, prefer upstream's version but re-apply the fork's intent on top
+               - Stage resolved files with `git add`
+               - Continue with `git rebase --continue`
+            5. After successful rebase, verify the fork-only commits are on TOP of the history (above all upstream commits)
+            6. Run `git log --oneline -20` to confirm the fork commits sit at the top
+            7. Push with: `git push origin master --force-with-lease`
+
+            CRITICAL RULES:
+            - Fork-only commits MUST always be at the top of the history (most recent)
+            - Upstream commits go below the fork's custom commits
+            - Never drop or squash fork-only commits
+            - If a fork commit becomes empty after rebase (upstream already has the change), skip it with `git rebase --skip`
+            - If resolution is ambiguous, prefer upstream's code but keep the fork commit with a note
+
+          timeout_minutes: 15
