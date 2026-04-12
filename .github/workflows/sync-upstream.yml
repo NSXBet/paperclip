@@ -72,7 +72,7 @@ jobs:
 
       - name: Use Claude Code for conflict resolution
         if: steps.check.outputs.behind != '0' && steps.fast-forward.outputs.status == 'conflict'
-        uses: anthropics/claude-code-action@v1
+        uses: nsx-actions/anthropics_claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           direct_prompt: |
