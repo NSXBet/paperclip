@@ -1,12 +1,9 @@
-name: Build and Push Docker Image
+name: Mirror Paperclip Image to ECR
 
 on:
-  push:
-    branches:
-      - master
-    paths-ignore:
-      - 'charts/**'
-      - '.github/**'
+  schedule:
+    # Every Monday at 10:00 UTC (after upstream sync)
+    - cron: "0 10 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -14,14 +11,11 @@ permissions:
   contents: read
 
 jobs:
-  build-push:
+  mirror:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: nsx-actions/aws-actions_configure-aws-credentials@v4
         with:
@@ -37,12 +31,24 @@ jobs:
       - name: Create ECR repository if not exists
         run: |
           aws ecr describe-repositories --repository-names paperclip 2>/dev/null || \
-            aws ecr create-repository --repository-name paperclip --image-tag-mutability IMMUTABLE
+            aws ecr create-repository --repository-name paperclip --image-tag-mutability MUTABLE
 
-      - name: Build and push Docker image
+      - name: Pull from GHCR and push to ECR
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
-          docker build -t $REGISTRY/paperclip:${{ github.sha }} -t $REGISTRY/paperclip:latest .
-          docker push $REGISTRY/paperclip:${{ github.sha }}
+          # Pull latest from upstream
+          docker pull ghcr.io/paperclipai/paperclip:latest
+
+          # Get the upstream SHA tag if available
+          UPSTREAM_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/paperclipai/paperclip:latest | cut -d@ -f2 | cut -c1-12)
+
+          # Tag for ECR
+          docker tag ghcr.io/paperclipai/paperclip:latest $REGISTRY/paperclip:latest
+          docker tag ghcr.io/paperclipai/paperclip:latest $REGISTRY/paperclip:$UPSTREAM_DIGEST
+
+          # Push to ECR
           docker push $REGISTRY/paperclip:latest
+          docker push $REGISTRY/paperclip:$UPSTREAM_DIGEST
+
+          echo "Mirrored ghcr.io/paperclipai/paperclip:latest -> $REGISTRY/paperclip:latest ($UPSTREAM_DIGEST)"
