@@ -53,6 +53,12 @@ externalSecret:
   secretStoreRef: aws-secretstore
   refreshInterval: 60s
 
+# -- Istio VirtualService
+virtualService:
+  enabled: true
+  host: paperclip.example.com
+  gateway: istio-system/internal-gateway
+
 # -- Extra environment variables (non-secret, set directly on the pod)
 env:
   NODE_ENV: production
