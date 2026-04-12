@@ -1,0 +1,12 @@
+apiVersion: v2
+name: paperclip
+description: Paperclip - runs your business
+type: application
+version: 0.1.0
+appVersion: "latest"
+
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: postgresql.enabled

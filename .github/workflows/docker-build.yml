@@ -1,0 +1,48 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - 'charts/**'
+      - '.github/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: nsx-actions/aws-actions_configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: nsx-actions/aws-actions_amazon-ecr-login@v2
+        with:
+          mask-password: true
+
+      - name: Create ECR repository if not exists
+        run: |
+          aws ecr describe-repositories --repository-names paperclip 2>/dev/null || \
+            aws ecr create-repository --repository-name paperclip --image-tag-mutability IMMUTABLE
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $REGISTRY/paperclip:${{ github.sha }} -t $REGISTRY/paperclip:latest .
+          docker push $REGISTRY/paperclip:${{ github.sha }}
+          docker push $REGISTRY/paperclip:latest

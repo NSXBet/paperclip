@@ -1,0 +1,77 @@
+name: Package and Push Helm Chart
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'charts/**'
+  workflow_dispatch:
+  release:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  helm-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: nsx-actions/aws-actions_configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install Helm
+        uses: nsx-actions/Azure_setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: nsx-actions/aws-actions_amazon-ecr-login@v2
+        with:
+          mask-password: true
+
+      - name: Authenticate Helm with ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          aws ecr get-login-password --region us-east-1 | \
+            helm registry login --username AWS --password-stdin $REGISTRY
+
+      - name: Package and Push Charts
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          for chart_dir in charts/*/; do
+            [ ! -d "$chart_dir" ] && continue
+            [ ! -f "${chart_dir}/Chart.yaml" ] && continue
+
+            chart_name=$(basename "$chart_dir")
+            echo "Processing chart: $chart_name"
+
+            # Create ECR repository if it doesn't exist
+            if ! aws ecr describe-repositories --repository-names "charts/${chart_name}" 2>/dev/null; then
+              echo "Creating ECR repository: charts/${chart_name}"
+              aws ecr create-repository --repository-name "charts/${chart_name}" --image-tag-mutability IMMUTABLE || true
+            fi
+
+            pushd "$chart_dir" || continue
+
+            helm dependency build . 2>/dev/null || true
+            version=$(grep '^version:' Chart.yaml | awk '{print $2}')
+
+            if helm package .; then
+              helm push "${chart_name}-${version}.tgz" "oci://${REGISTRY}/charts" || echo "Warning: push failed for $chart_name-$version (version may already exist)"
+            fi
+
+            popd
+          done
