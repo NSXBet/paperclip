@@ -50,7 +50,7 @@ externalSecret:
   # Override the target Kubernetes Secret name
   targetName: ""
   # ClusterSecretStore to use
-  secretStoreRef: gcp-backend
+  secretStoreRef: aws-secretstore
   refreshInterval: 60s
 
 # -- Extra environment variables (non-secret, set directly on the pod)
