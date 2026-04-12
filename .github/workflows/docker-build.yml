@@ -1,9 +1,14 @@
-name: Mirror Paperclip Image to ECR
+name: Build and Push Docker Image
 
 on:
-  schedule:
-    # Every Monday at 10:00 UTC (after upstream sync)
-    - cron: "0 10 * * 1"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - 'charts/**'
+      - '.github/**'
+      - 'docs/**'
+      - '*.md'
   workflow_dispatch:
 
 permissions:
@@ -11,11 +16,14 @@ permissions:
   contents: read
 
 jobs:
-  mirror:
+  build-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: nsx-actions/aws-actions_configure-aws-credentials@v4
         with:
@@ -33,22 +41,24 @@ jobs:
           aws ecr describe-repositories --repository-names paperclip 2>/dev/null || \
             aws ecr create-repository --repository-name paperclip --image-tag-mutability MUTABLE
 
-      - name: Pull from GHCR and push to ECR
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          # Pull latest from upstream
-          docker pull ghcr.io/paperclipai/paperclip:latest
+      - name: Docker metadata
+        id: meta
+        uses: nsx-actions/docker_metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/paperclip
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
 
-          # Get the upstream SHA tag if available
-          UPSTREAM_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/paperclipai/paperclip:latest | cut -d@ -f2 | cut -c1-12)
+      - name: Set up Docker Buildx
+        uses: nsx-actions/docker_setup-buildx-action@v3
 
-          # Tag for ECR
-          docker tag ghcr.io/paperclipai/paperclip:latest $REGISTRY/paperclip:latest
-          docker tag ghcr.io/paperclipai/paperclip:latest $REGISTRY/paperclip:$UPSTREAM_DIGEST
-
-          # Push to ECR
-          docker push $REGISTRY/paperclip:latest
-          docker push $REGISTRY/paperclip:$UPSTREAM_DIGEST
-
-          echo "Mirrored ghcr.io/paperclipai/paperclip:latest -> $REGISTRY/paperclip:latest ($UPSTREAM_DIGEST)"
+      - name: Build and push
+        uses: nsx-actions/docker_build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
