@@ -53,6 +53,12 @@ spec:
           volumeMounts:
             - name: paperclip-home
               mountPath: /paperclip
+            {{- if .Values.configSecret.enabled }}
+            - name: paperclip-config
+              mountPath: /paperclip/instances/default/config.json
+              subPath: config.json
+              readOnly: true
+            {{- end }}
           livenessProbe:
             tcpSocket:
               port: http
@@ -75,6 +81,11 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.configSecret.enabled }}
+        - name: paperclip-config
+          secret:
+            secretName: {{ include "paperclip.fullname" . }}-config
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

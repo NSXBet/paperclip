@@ -53,6 +53,12 @@ externalSecret:
   secretStoreRef: aws-secretstore
   refreshInterval: 60s
 
+# -- Config file secret (config.json from AWS Secrets Manager)
+configSecret:
+  enabled: false
+  key: ""
+  refreshInterval: 60s
+
 # -- Istio VirtualService
 virtualService:
   enabled: true
